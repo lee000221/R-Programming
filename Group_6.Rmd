@@ -1,0 +1,623 @@
+---
+title: "WQD7004 Group 6"
+author: 
+- Zhang Ziteng              (S2149768)
+- Vijayraj A/L Kalachilvam  (22061543)
+- Xu Yanzhen                (S2139007)
+- Wen Si                    (S2116753)
+- Koo Siew Ling             (S2139278)
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, echo = TRUE)
+```
+This R Markdown document is the complete report of the group project by Group 6 for Occurrence 1 of the WQD7004 course in Faculty of Computer Science and Information Technology, University of Malaya for Semester 2 of 2022/2023 Academic Session.
+
+## <strong> 1 Introduction </strong>
+<strong> Title: </strong> 
+
+- Prediction of Rental Price and classify the renovation_level in Kuala Lumpur and Selangor, Malaysia
+
+This project aims to predict rental prices and classify the renovation levels of properties in Kuala Lumpur and Selangor, two of Malaysia's most vibrant and populated regions. Malaysia's rental market, particularly in these areas, has seen significant fluctuations due to various factors such as size, environment condition, and property characteristics. Accurate predictions of rental prices can provide critical insights to property investors, landlords, tenants, and policymakers, supporting informed decision-making and promoting a more balanced and fair rental market.
+
+For the project, firstly, We will leverage advanced machine learning algorithms and data analytics techniques on the sample dataset collected from kaggle. Secondly, We will train three regression models to predict rental_price based on a comprehensive dataset that includes property characteristics, such as size, location, completion_year, property_type and so on. Next, as we want to explore classification problem as well, so based on the observation of Q1,Q3 on rental_price, we will generate a new classification target which is the level of renovation. Moreover is to build three classification models to predict renovation_level. Lastly, we will compare the performance of three regression models using r2 score and Mae score, and the performance of classification models using accuracy, precision, and f1-score.  
+
+<strong> Goal: </strong>
+Predict Rental Price and classify the renovation_level based on various variables
+
+<strong> Objectives: </strong>
+
+- To preprocess and explore the raw dataset 
+- To predict rental price using three regression model for comparation purpose.
+- To create the new classification target named as renovation level based on the range of rental price.
+- To predict renovation level by using three classification model for comparation purpose.
+
+<strong> Research Questions </strong>
+
+- What are the biggest factor affecting the rental pricing?
+- Which factor in location that has the highest affect to rent price?
+- What is the most suitable regression model to predict rental price based on this dataset?
+- What is the best classification model to predict renovation level?
+
+<strong> Dataset description: </strong>
+The data was scraped from mudah.my. We acquired the raw data from kaggle: https://www.kaggle.com/datasets/ariewijaya/rent-pricing-kuala-lumpur-malaysi 
+
+
+## 2. <strong> Main System </strong>
+### <strong> 2.1 Load libraries and functions <strong>
+```{r loading libraries and functions}
+source("function.R")
+source("visualization.R")
+library(tidyverse)
+library(tidyr)
+library(dplyr)
+library(stringr)
+library(lubridate)
+library(readr)
+library(magrittr)
+library(ggplot2)
+library(gridExtra)
+library(caret)
+library(missForest)
+library(mice)
+library(gbm)
+library(randomForest)
+library(reshape2)
+library(rpart)
+library(rpart.plot)
+library(knitr)
+library(scales)
+library(e1071)
+library(patchwork)
+library(GGally)
+```
+
+### <strong> 2.2 General overview of the raw dataset </strong>
+<strong> 2.2.1 Load raw dataset </strong>
+```{r raw data}
+df <- read_csv("raw_rental mala.csv")
+glimpse(df)
+```
+It can be found that the raw dataset is very dirty. We first find the following issues:
+
+- ads_id and prop_name can be meanless variables.
+- completion_year, parking include large number of NA value.
+- monthly_rent wrongly assigned to chr type because of RM and per month description. 
+- location is chr data, need further process.
+- property_type, is char data, need further transformation.
+- rooms, bathroom seems fine for first view.
+- size wrongly assigned to chr type because of sq.ft.
+- furnished is char data, need further transformation.
+- facilities and additional_facilities seems meanless, need further process.
+- region is char data, need further transformation.
+
+### <strong> 2.3 Data Pre-processing </strong>
+<strong> 2.3.1 Remove duplicated data </strong>
+```{r duplicated}
+# Remove duplicated values
+dup1 <- sum(duplicated(df))
+cat('The number of duplicated data from the dataset before processing is:',dup1)
+df <- df[!duplicated(df), ]
+dup2 <- sum(duplicated(df))
+cat(' The number of duplicated data from the dataset after processing is:',dup2)
+```
+- Firstly, we check and delete the duplicated data from the raw dataset.
+
+<strong> 2.3.2 Removing 'RM' from monthly rent and rename the column </strong>
+```{r monlthly_rent_rm}
+df <- df %>%
+  mutate(monthly_rent = gsub("RM|per month|,", "", monthly_rent),
+         monthly_rent = gsub("\\s+", "", monthly_rent),
+         monthly_rent = as.numeric(monthly_rent))
+colnames(df)[colnames(df) == "monthly_rent"] <- "monthly_rent_rm"
+```
+- For monthly_rent, we remove the RM, per month, transform it as numeric and rename the column as monthly_rent_rm.
+
+<strong> 2.3.3 Dropping 'sq.ft' from size </strong>
+```{r size}
+df$size <- as.numeric(str_extract(df$size, "(.*?)(?= sq)"))
+# rename column name as size_sqft
+colnames(df)[colnames(df) == "size"] <- "size_sqft"
+```
+- For size, we remove the sq.ft, transform it as numeric and and rename the column as size_sqft.
+
+<strong> 2.3.4 Extract near_by_ktm_lrt from location count with yes/no </strong>
+```{r location1}
+df$location <- str_extract(df$location, "\\w+$")
+``` 
+- For location, we remove the province name, such as KL and Selangor.
+- Further transformation will process after visualization. 
+
+<strong> 2.3.5 Facilities and additional_facilities processing </strong>
+```{r facilities}
+# count the no of facilities 
+df <- df %>%
+  mutate(fac_count = str_count(facilities, ",") + 1,
+         add_fac_count = str_count(additional_facilities, ",") + 1)
+# generate a new column named nearby_ktm_lrt from aditional_facilities 
+df$nearby_ktm_lrt <- sapply(df$additional_facilities, function(x) extract_near_ktm_lrt(x))
+```
+- Facilities and additional_facilities,  we count the number of facilities it included for each and create two new column as fac_count and add_fac_count. 
+- Secondly, we think that if the house near LRT can be a important factor that affects monthly rent. 
+- So, we create a new column named nearby_ktm_lrt and judgment the value yes/no based on LRT and KTM appeared in additional_facilities.
+
+<strong> 2.3.6 drop ads_id, prop_name, facilities, additional_facilities, location </strong>
+```{r drop}
+df <- df[, !(names(df) %in% c('ads_id', 'prop_name', 'facilities', 'additional_facilities'))]
+
+glimpse(df)
+```
+- Next, we drop the 4 useless columns 'ads_id', 'prop_name', 'facilities', 'additional_facilities'.
+
+### <strong> 2.4 Visualization </strong>
+<strong> 2.4.1 Bar Plot </strong>
+```{r bar plot}
+ggplot(df) + geom_bar(mapping = aes(x = furnished, fill = "red")) + geom_text(mapping = aes(x = furnished, y = ..count.., label = ..count..), stat = "count", position = position_stack(vjust = 0.5)) + theme(legend.position = "none")
+ggplot(df) + geom_bar(mapping = aes(x = region, fill = "red")) + geom_text(mapping = aes(x = region, y = ..count.., label = ..count..), stat = "count", position = position_stack(vjust = 0.5)) + theme(legend.position = "none")
+ggplot(df) + geom_bar(mapping = aes(x = completion_year, fill = "red")) + geom_text(mapping = aes(x = completion_year, y = ..count.., label = ..count..), stat = "count", position = position_stack(vjust = 0.5)) + theme(legend.position = "none")
+ggplot(df) + geom_bar(mapping = aes(x = bathroom, fill = "red")) + geom_text(mapping = aes(x = bathroom, y = ..count.., label = ..count..), stat = "count", position = position_stack(vjust = 0.5)) + theme(legend.position = "none")
+```
+
+- Fully furnished shows the most count and there are 5 NA data in it
+- Kuala Lumpur and Selangor have almost the same value count.
+- There are more rental shows in year 2021 compare to the rest.
+- Most of the rented house have 2 bathroom and 3 of the rented house have 8 bathroom.
+
+<strong> 2.4.2 Stack bar description </strong>
+```{r bath_rent_room}
+ggplot(df, aes(fill=bathroom, y=monthly_rent_rm, x=rooms)) +
+  geom_bar(position="dodge", stat="identity")
+```
+
+- From the above bar chart we can conclude that 2 room and below have 1 bathroom. 4 rooms have 4-6 bathrooms. There are more rented house with 4 rooms with 4-6 bathrooms.
+
+<strong> 2.4.3 Parallel Coordinate Plot </strong>
+```{r PC}
+#Normalization done to shows a better Parallel Coordinate results
+process <- preProcess(as.data.frame(df), method=c("range"))
+norm_scale <- predict(process, as.data.frame(df))
+ggparcoord(norm_scale,
+           columns = 4:6,
+           groupColumn = "monthly_rent_rm",
+           showPoints = TRUE)
+```
+
+- Above plot is to shows relationship between the 3 variables which is rooms, parking and bathroom.
+- The values in a parallel coordinate plot are always normalized. 
+- Each of the line are collection of points of each of the variables and all are connected. 
+- This graph below shows that all this 3 variables relationship with monthly rental is at the price below 0.25. 
+- The cons of this graph is graph may become over-cluttered as data hasn't been clean yet which may be one of the reason all are showing below 0.25.
+
+<strong> 2.4.4 Histogram for interval cropped </strong>
+```{r histogram}
+# histogram
+grid.arrange(his_completion_year, his_monthly_rm, his_parking, his_size, 
+             his_rooms,his_bathroom,his_fac_count,his_add_fac_count,nrow = 4,ncol = 2)
+```
+
+- I first using histogram to overview all the interval varaibles. 
+- After the parameters adjustment, the histogram is shown as the above diagram. 
+- The best parameters setting wiil be shown in next data cleaning section. 
+
+<strong> 2.4.5 Box plot for some cropped comparation </strong>
+```{r Boxplot}
+# boxplot
+grid.arrange(box_uncropped_size,box_cropped_size,
+             box_uncropped_bathrooms,box_cropped_bathrooms,
+             box_uncropped_parking,box_cropped_parking,
+             box_uncropped_rent,box_cropped_rent,
+             box_uncropped_rooms,box_cropped_rooms,nrow = 5, ncol = 2)
+```
+
+- Secondly, I using box-plot to show the data distribution for before and after cropped. 
+
+<strong> 2.4.6 Pie Chart for nominal variables </strong>
+```{r pie chart}
+pie_furnished <- create_pie_chart(df, "furnished")
+pie_property_type <- create_pie_chart(df, "property_type")
+pie_region <- create_pie_chart(df, "region")
+pie_nearby_ktm_lrt <- create_pie_chart(df, "nearby_ktm_lrt")
+```
+
+- Next I used pie chart to overview nominal variable distribution.
+- As you can view, all the nominal variable except property_type distribution seems good.
+- For property_type, more than 95% percent of data are in Apartment, Condominium, and Service Residence.
+
+<strong> 2.4.7 Line chart(interval) VS monthly_rent </strong>
+```{r 2-variable diagram}
+grid.arrange(line_size_VS_rent, line_year_VS_rent, line_Parking_VS_rent,  
+             line_add_fac_count_VS_rent,line_fac_count_VS_rent,line_rooms_VS_rent,line_bathroom_VS_rent,nrow = 4,ncol = 2)
+```
+
+- In the end, I use plot chart to view the relation among interval variable to monthly rent.
+- And box plot to view the nominal variable compare to monthly rent.
+- It can be found that, for plot chart, Rental prices tend to rise as most of these interval variable increase. Completion Year appear to have the least variation.
+
+<strong> 2.4.7 Box plot(normal) VS monthly_rent </strong>
+```{r }
+grid.arrange(box_lrt_VS_rent,
+             box_furnished_VS_rent,
+             box_property_VS_rent,
+             box_region_VS_rent, nrow = 4, ncol = 1)
+```
+
+
+- Through the box plot, it can be seen that most of the nominal variables have some interference data when the rent price is greater than 4000 and smaller than 500.
+
+
+### <strong> 2.5 Data cleaning after visualization </strong>
+<strong> 2.5.1 Noise/outliers processing </strong>
+```{r noise}
+df1 <- df
+df1 <- df1 %>% filter(monthly_rent_rm > 400 & monthly_rent_rm < 3500)
+df1 <- df1 %>% filter(size_sqft > 100 & size_sqft < 2000)
+df1 <- df1 %>% filter(rooms > 0 & rooms < 4)
+df1 <- df1 %>% filter(parking > 0 & parking < 4)
+df1 <- df1 %>% filter(bathroom > 0 & bathroom < 4)
+df1 <- df1[df1$property_type %in% c("Apartment", "Condominium", "Service Residence"), ]
+```
+
+- After visualization, as you can see, we filter the most suitable range for the numeric variables.
+- And for property_type, it can be found that 95% of data are in "Apartment", "Condominium", "Service Residence". So, we only keep these 3 types of data.
+
+<strong> 2.5.2 Categorical to numerical transformation </strong>
+```{r transformation}
+df1$furnished <- round(as.numeric(factor(df1$furnished, levels = c("Not Furnished", "Partially Furnished", "Fully Furnished"), labels = c(1, 2, 3))),0)
+df1$region <- round(as.numeric(factor(df1$region, levels = c("Kuala Lumpur", "Selangor"), labels = c(1, 2))),0)
+df1$nearby_ktm_lrt <- round(as.numeric(factor(df1$nearby_ktm_lrt, levels = c("yes", "no"), labels = c(2, 1))),0)
+df1$property_type <- round(as.numeric(factor(df1$property_type, levels = c("Condominium", "Apartment", "Service Residence"), labels = c(1, 2, 3 ))),0)
+```
+
+- For categorical data transformation, we transform it to 1,2,3 based the unique value for each type except location.
+
+<strong> 2.5.3 count unique value for categorical data </strong>
+```{r categorical unique value count}
+is_categorical <- df1[,sapply(df1, function(x) is.factor(x) || is.character(x))]
+print(paste('The number of unique values for categorical data:'))
+sapply(is_categorical, function(x) length(unique(x)))
+```
+
+- Next, we count the number of Unique values for all the categorical variables. 
+- The same time we want to check the if all categorical data transform successfully. 
+
+<strong> 2.5.4 Location filter </strong>
+```{r location filter}
+# count the number of rows for each unique value
+location_counts <- df1 %>%
+  group_by(location) %>%
+  summarise(n = n())
+# get the unique value count greater than 100
+selected_locations <- location_counts %>%
+  filter(n > 100) %>%
+  pull(location)
+# keep the unique value count greater than 100
+df1 <- df1 %>%
+  filter(location %in% selected_locations)
+```
+
+- We tried to drop location first, however, r2-score for regression models and accuracy for classification models are lower around 10%. 
+- So, we keep the location processing. Firstly, we count the number of each unique values of location, and remove the unique values counted less than 100 rows. 
+
+<strong> 2.5.5 Location processing </strong>
+```{r dummy location}
+# transform unique value of in category of X to new column
+X_cat <- df1[,sapply(df1, function(x) is.factor(x) || is.character(x))]
+X_cat_ohe <- dummyVars(~ . , data = X_cat)
+X_cat_ohe <- predict(X_cat_ohe, newdata = X_cat)
+```
+
+- Next, We convert the unique values that appear in all locations into new dummy variables through the dummyVars() function, and the values of these columns are displayed in binary form.
+- And we cbind the numeric data imputed and the location together.
+
+<strong> 2.5.6 Null value processing </strong>
+```{r Null processing}
+#NA processing
+colSums(is.na(df1))
+
+# Apply numerical imputation
+num_name <- colnames(df1)[sapply(df1, function(x) is.numeric(x) || is.integer(x))]
+X_num <- df1[, num_name]
+X_num_imputed <- numericalImputation(X_num, strategy = "mode")
+colSums(is.na(X_num_imputed))
+
+df1 <- cbind(X_num_imputed, X_cat_ohe)
+```
+
+- Next we check the NA value for all the columns.
+- If can be found that for location there is no NA value, all NA are in numerical variables.
+- So, we fill the NA value by using mode. Here we didn't use mean because if we using mean, the value filled might not be integer for some data, such as parking number. 
+
+### <strong> 2.6 Regression model pre-processing </strong>
+<strong> 2.6.1 X/y split, train/test split </strong>
+```{r Regression}
+# Call the function and assign the results to X and y
+result <- extractInputOutput(data = df1, output_column_name = "monthly_rent_rm")
+X1 <- result$input_data
+y1 <- result$output_data
+X_clean1 <- standardizerData(X1)
+set.seed(123)
+train_indices1 <- createDataPartition(y1, p = 0.8, list = FALSE)
+
+# Split the data into training and testing sets for regression model
+X_train1 <- X_clean1[train_indices1, ]
+y_train1 <- y1[train_indices1]
+X_test1 <- X_clean1[-train_indices1, ]
+y_test1 <- y1[-train_indices1]
+cat("Proportion of test set:", round(nrow(X_test1) / nrow(X_clean1), 2))
+```
+
+- Before building models for regression, I split the dataset set the monthly_rent_rm as y value. 
+- Then Split to train set and test set. 
+- The proportion of the test set is 20%. 
+
+### <strong> 2.7 Train regression model </strong>
+<strong> 2.7.1 Linear regression </strong>
+```{r Linear regression}
+## linear regression model
+y_baseline <- rep(mean(y_train1), length(y_train1))
+start_time_lr <- Sys.time()
+# Train the linear regression model
+model_lr <- lm(y_train1 ~ ., data = X_train1)
+end_time_lr <- Sys.time()
+time_difference_lr <- end_time_lr - start_time_lr
+
+# Predict using the test data
+y_pred_lr_train <- round(predict(model_lr, X_train1),0)
+# Calculate metrics
+lr_score_train <- calculate_metrics(y_train1, y_pred_lr_train)
+
+plot(y_train1, y_pred_lr_train, type = "p",
+     xlab = "Actual Rent",
+     ylab = "Predicted Rent",
+     main = "Actual Rent vs Predicted Rent for train set")
+lines(smooth.spline(y_train1, y_pred_lr_train), col = "red")
+
+# Predict using the test data
+y_pred_lr_test <- round(predict(model_lr, X_test1),0)
+# Calculate metrics
+lr_score_test <- calculate_metrics(y_test1, y_pred_lr_test)
+
+plot(y_test1, y_pred_lr_test, type = "p",
+     xlab = "Actual Rent",
+     ylab = "Predicted Rent",
+     main = "Actual Rent vs Predicted Rent for test set")
+lines(smooth.spline(y_test1, y_pred_lr_test), col = "red")
+```
+
+<strong> 2.7.2 Gradient Boosting Regression </strong>
+```{r Gradient Boosting Regression}
+start_time_gbr <- Sys.time()
+# Build Gradient Boosting Regression model
+model_gbr <- gbm(y_train1 ~ ., data = X_train1, n.trees = 100, 
+                 distribution = "gaussian", interaction.depth = 4, shrinkage = 0.1, 
+                 n.minobsinnode = 10, bag.fraction = 0.5, train.fraction = 0.8, 
+                 cv.folds = 5, verbose = TRUE)
+end_time_gbr <- Sys.time()
+time_difference_gbr <- end_time_gbr - start_time_gbr
+
+y_pred_gbr_train <- predict(model_gbr, newdata = X_train1, n.trees = 100, type = "response")
+# Calculate mean absolute error and R- suqared
+gbr_score_train <- calculate_metrics(y_train1, y_pred_gbr_train)
+# Print R-squared and MAE scores
+
+plot(y_train1, y_pred_gbr_train, type = "p",
+     xlab = "Actual Rent",
+     ylab = "Predicted Rent",
+     main = "Actual Rent vs Predicted Rent for train set")
+lines(smooth.spline(y_train1, y_pred_gbr_train), col = "red")
+
+# Predict on the test set
+y_pred_gbr_test <- predict(model_gbr, newdata = X_test1, n.trees = 100, type = "response")
+# Calculate mean absolute error and R- suqared
+gbr_score_test <- calculate_metrics(y_test1, y_pred_gbr_test)
+# Print R-squared and MAE scores
+
+plot(y_test1, y_pred_gbr_test, type = "p",
+     xlab = "Actual Rent",
+     ylab = "Predicted Rent",
+     main = "Actual Rent vs Predicted Rent for test set")
+lines(smooth.spline(y_test1, y_pred_gbr_test), col = "red")
+```
+
+<strong> 2.7.3 Random Forest Regression </strong>
+```{r random forest}
+# Build random forest regression model
+colnames(X_train1) <- gsub(" ", "_", colnames(X_train1))
+
+start_time_rf <- Sys.time()
+model_rf <- randomForest(y_train1 ~ ., data = X_train1)
+end_time_rf <- Sys.time()
+time_difference_rf <- end_time_rf - start_time_rf
+
+# Predict train
+y_pred_rf_train <- predict(model_rf, newdata = X_train1)
+# Calculate mean absolute error and R2-squared
+rf_score_train <- calculate_metrics(y_train1, y_pred_rf_train)
+
+plot(y_train1, y_pred_rf_train, type = "p",
+     xlab = "Actual Rent",
+     ylab = "Predicted Rent",
+     main = "Actual Rent vs Predicted Rent for train set")
+lines(smooth.spline(y_train1, y_pred_gbr_train), col = "red")
+
+
+# Predict test
+y_pred_rf_test <- predict(model_rf, newdata = X_test1)
+# Calculate mean absolute error and R2-squared
+rf_score_test <- calculate_metrics(y_test1, y_pred_rf_test)
+
+plot(y_test1, y_pred_rf_test, type = "p",
+     xlab = "Actual Rent",
+     ylab = "Predicted Rent",
+     main = "Actual Rent vs Predicted Rent for test set")
+lines(smooth.spline(y_test1, y_pred_gbr_test), col = "red")
+```
+
+- According to the fit chart, random forest has the best fit.
+
+<strong> 2.7.4 Create the summary DataFrame </strong>
+```{r regression model summary}
+summary_df <- data.frame(
+  Model = c("LR", "GBR", "RFR"),  # Update with model names
+  MAE_Score_train = c(lr_score_train$MAE_score, 
+                      gbr_score_train$MAE_score, 
+                      rf_score_train$MAE_score),  # Update with MAE scores
+  R2_Score_train = c(lr_score_train$R2_score, 
+                     gbr_score_train$R2_score, 
+                     rf_score_train$R2_score), # Update with R2 scores
+  MAE_Score_test = c(lr_score_test$MAE_score, 
+                      gbr_score_test$MAE_score, 
+                      rf_score_test$MAE_score),  # Update with MAE scores
+  R2_Score_test = c(lr_score_test$R2_score, 
+                     gbr_score_test$R2_score, 
+                     rf_score_test$R2_score), # Update with R2 scores
+  Modeling_Time_taken = round(c(time_difference_lr, time_difference_gbr, time_difference_rf),2)
+)
+# Sort the DataFrame by R2-Score in descending order
+regression_results <- summary_df[order(summary_df$R2_Score_test, decreasing = TRUE), ]
+regression_results
+```
+
+- I used MAE_Score, R^2_Score to evaluate the three models. 
+- MAE score is a robust measure of how accurately the model predicts the target variable. Lower MAE values are better as they indicate less error. 
+- r^2 score provides a measure of how well future outcomes are likely to be predicted by the model. R^2 of 1 indicates that the regression predictions perfectly fit the data.    
+- The performance of random forest has the lowest MAE score and highest r^2 score for both train set and test set. However, it takes longest time to train the model. Also, compare to the score with train set and test set, random forest seems has the largest differences. Which mean the score for random forest is not stable, not so reliable. Even so, the random forest regression model far outperforms than LR and GBR. Thus, random forest is the winner among the three regression models.
+
+### <strong> 2.8 Classification processing </strong>
+<strong> 2.8.1 Create new target renovation_level </strong>
+```{r Classification processing}
+q33 <- quantile(df1$monthly_rent_rm/ df1$rooms, probs = 0.33)
+q67 <- quantile(df1$monthly_rent_rm/ df1$rooms, probs = 0.67)
+
+df1$renovation_level <- ifelse(df1$monthly_rent_rm / df1$rooms < 450, "standard",
+                              ifelse(df1$monthly_rent_rm / df1$rooms >= 450 & 
+                                       df1$monthly_rent_rm / df1$rooms <= 666,
+                                     "exquisite","luxury"))
+df1$renovation_level <- round(as.numeric(factor(df1$renovation_level, levels = c("luxury", "exquisite", "standard"), labels = c(3, 2, 1))),0)
+```
+
+- Since this project requires 2 research questions, which are regression and classification. 
+- Our dataset doesn't have another meaningful classification target.
+- So, we decided to create a new target variable based on the range of monthly_rent_rm. 
+- The new target variable is renovation_level, and it has three types of class which are luxury, exquisite, and standard. 
+
+<strong> 2.8.2 X/y split, train/test split </strong>
+```{r classification split}
+df2 <- df1
+result2 <- extractInputOutput(data = df2, output_column_name = "renovation_level")
+X2 <- result2$input_data
+y2 <- result2$output_data
+X_clean2 <- standardizerData(X2)
+
+# Train-test split
+# Create the train and test indices
+train_indices2 <- createDataPartition(y2, p = 0.8, list = FALSE)
+
+# Split the data into training and testing sets
+X_train2 <- X_clean2[train_indices2, ]
+y_train2 <- y2[train_indices2]
+X_test2 <- X_clean2[-train_indices2, ]
+y_test2 <- y2[-train_indices2]
+round(nrow(X_test2) / nrow(X_clean2), 2)
+```
+
+<strong> 2.8.3 Classification variables exploration </strong>
+```{r Classification variables exploration}
+# classification variables exploration
+# draw the correlation heat map
+table(y_test2)
+
+# From the table(y_test2), we can view the 3 types of class distribution to ensure that there is not much difference in the amount of 3 types of data.
+
+corr <- c("monthly_rent_rm","completion_year", "rooms", "parking", "bathroom", "size_sqft", 
+          "fac_count", "add_fac_count","region", "nearby_ktm_lrt","property_type","renovation_level")
+heat <- df2[,corr]
+
+options(repr.plot.width=8, repr.plot.height=6)
+
+qplot(x=Var1, y=Var2, data=melt(cor(heat, use="p")), fill=value, geom="tile") +
+  scale_fill_gradient2(low = "green", high = "red", mid = "white", 
+                       midpoint = 0, limit = c(-1,1), space = "Lab", 
+                       name="Correlation") +
+  theme_minimal()+ 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, size = 8, hjust = 1))+
+  coord_fixed()+
+  ggtitle("Figure 7 Correlation Heatmap") +
+  theme(plot.title = element_text(hjust = 0.4))
+```
+
+### <strong> 2.9 Build Classification Model </strong>
+<strong> 2.9.1 Decision Tree Classification </strong>
+```{r Decision Tree }
+# Create the decision tree model
+X_train2 <- X_train2[, !(names(X_train2) %in% c("monthly_rent_rm"))]
+X_test2 <- X_test2[, !(names(X_test2) %in% c("monthly_rent_rm"))]
+ctrl=rpart.control(cp=0.001)
+model_dt <- rpart(y_train2 ~ ., data = X_train2, method = 'class', control=ctrl)
+# Predict using the tuned decision tree model
+y_pred_dt <- predict(model_dt, X_test2, type = 'class')
+# Get the predicted labels based on the highest column index
+pre_mat_dt <- table(y_test2, y_pred_dt)
+# print accuracy based on the confusion matrix prediction
+acc_test_dt <- sum(diag(pre_mat_dt)) / sum(pre_mat_dt)
+print(paste('Accuracy for Decision Tree test:', round(acc_test_dt, 4)))
+```
+
+- For classification model, we draw three types as well.
+- Since the classification target is generate based on the monthly_rent, so before build the model, first we need to remove the monthly_rent_rm variable. otherwise the accuracy rate will be falsely high.
+- The first one we used is Decision Tree.
+- As you can see, the accuracy for decision tree is around 77%. 
+
+<strong> 2.9.2 Naive Bayes Classification </strong>
+```{r Naive Bayes Classification}
+# Naive Bayes using in-built package e1071
+NBclassfier <- naiveBayes(y_train2 ~ ., data = X_train2)
+y_pred_NB <- predict(NBclassfier, newdata = X_test2)  
+pre_mat_NB <- table(y_test2, y_pred_NB)
+acc_test_NB <- sum(diag(pre_mat_NB)) / sum(pre_mat_NB)
+print(paste('Accuracy for Naive Bayes test:', round(acc_test_NB, 4)))
+```
+
+<strong> 2.9.3 Random Forest Classification </strong>
+```{r Random Forest Classification}
+# Build random forest for classification 
+rf_classifer <- randomForest(y_train2 ~ ., data = X_train2, importance =TRUE,ntree=500,nodesize=7, na.action=na.roughfix)
+# Predict
+y_pred_rf2 <- round(predict(rf_classifer, newdata = X_test2))
+pre_mat_rf2 <- table(y_test2, y_pred_rf2)
+acc_test_rf <- sum(diag(pre_mat_rf2)) / sum(pre_mat_rf2)
+print(paste('Accuracy for random forest test:', round(acc_test_rf, 4)))
+``` 
+
+<strong> 2.9.4 classification results </strong>
+```{r classification results}
+classification_results <- list(pre_mat_dt, pre_mat_NB, pre_mat_rf2)
+# Calculate metrics
+classification_results <- classification_results_metrics(classification_results)
+classification_results
+```
+
+- These are the comparation results for classification models. 
+- Here I used Accuracy, precision, recall, and the F1-score to evaluate their performance, since they can provide different perspectives on the model's performance.
+
+- Accuracy is the proportion of correct predictions which is true positives and true negatives among the total number of cases examined. It's a suitable measure when the classes are balanced, but can be misleading if the class distribution is imbalanced. For test set, the classes of y is balanced, so it is a reliable measures. 
+- Precision is the proportion of true positives out of all positive predictions. It is a measure of a classifier's exactness. A low precision can also indicate a high number of false positives. So, I want to know the Positive Predictive rate of the model. 
+- Recall is the proportion of true positives out of all actual positives which is true positives + false negatives. Recall is a measure of a classifier's completeness. A low recall indicates many false negatives. I want to know the True Positive Rate of the model. 
+- The F1-score is the harmonic mean of precision and recall, and tries to balance the two. It is especially useful if the dataset have an uneven class distribution, as it seeks a balance between precision and recall. Here, I want to use F1-score as a reference.
+
+- As the results, we have 3 conclusion
+- 1. The precision for class 1 of all the three model are greater than accuracy, class 2 of all the three model are lower than accuracy and precision for class 1 and 2 very much, which mean the models are less confident and less correct when predicting Class 2. It could imply that Class 2 is more difficult for the models to correctly identify, possibly due to reasons such as overlap of features with other classes, lack of distinctive features, or poor quality of labels for Class 2. 
+- 2. The precision, recall and F1-score for class 1 is clearly higher than 2 and 3 for all the three models. As the three classes are balanced. So, Class 1 might have more distinct or clear-cut features that make it easier to identify compared to classes 2 and 3. 
+- 3. Random forest has the best performance.
+
+
+## <strong> 3 Conclusion </strong>
+
+Thus, the end-users can now know the rental price of a type of property in certain area. They can also know the type of property (standard, luxury, exquisite) according to the specification of the property.
+
+## <strong> 4 Appendix </strong>
+
+- Youtube: https://youtu.be/hS82ZgsNJzw 
+- rpubs: https://rpubs.com/Zhang_Ziteng_s2149768/1053740 
